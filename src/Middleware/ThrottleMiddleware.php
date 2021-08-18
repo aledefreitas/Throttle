@@ -80,19 +80,27 @@ class ThrottleMiddleware implements MiddlewareInterface, EventDispatcherInterfac
     }
 
     /**
+     * {@inheritDoc}
+     */
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
+        //
+    }
+
+    /**
      * Process the request.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
      * @param \Psr\Http\Server\RequestHandlerInterface $handler The request handler.
      * @return \Psr\Http\Message\ResponseInterface A response.
      */
-    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    public function __invoke(ServerRequestInterface $request, ResponseInterface $response, callable $next)
     {
         $event = $this->dispatchEvent(self::EVENT_BEFORE_THROTTLE, [
             'request' => $request,
         ]);
         if ($event->isStopped()) {
-            return $handler->handle($request);
+            return $next($request, $response);
         }
 
         $this->_setIdentifier($request);
@@ -105,7 +113,7 @@ class ThrottleMiddleware implements MiddlewareInterface, EventDispatcherInterfac
             return $this->_getErrorResponse($rateLimit);
         }
 
-        $response = $handler->handle($request);
+        $response = $next($request, $response);
 
         return $this->_setHeaders($response, $rateLimit);
     }
@@ -177,10 +185,10 @@ class ThrottleMiddleware implements MiddlewareInterface, EventDispatcherInterfac
         $key = $throttle->getKey();
         $currentTime = time();
         $ttl = $throttle->getPeriod();
-        $cacheEngine = Cache::pool($this->getConfig('cacheConfig'));
+        $cacheEngine = Cache::engine($this->getConfig('cacheConfig'));
 
         /** @var \Muffin\Throttle\ValueObject\RateLimitInfo|null $rateLimit */
-        $rateLimit = $cacheEngine->get($key);
+        $rateLimit = $cacheEngine->read($key) ?: null;
 
         if ($rateLimit === null || $currentTime > $rateLimit->getResetTimestamp()) {
             $rateLimit = new RateLimitInfo($throttle->getLimit(), 1, $currentTime + $throttle->getPeriod());
@@ -198,7 +206,7 @@ class ThrottleMiddleware implements MiddlewareInterface, EventDispatcherInterfac
             'throttleInfo' => clone $throttle,
         ]);
 
-        $cacheEngine->set($key, $event->getData()['rateLimit'], $event->getData()['ttl']);
+        $cacheEngine->write($key, $event->getData()['rateLimit'], $event->getData()['ttl']);
 
         return $rateLimit;
     }
